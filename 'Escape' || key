@@ -1,0 +1,391 @@
+'Delete') {
+        handleButtonClick('clear');
+      } else if (key === 'Backspace') {
+        setExpression((prev) => prev.slice(0, -1));
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleButtonClick]);
+
+  const handleHistorySelect = useCallback(
+    (expr: string, result: string) => {
+      setExpression(expr);
+      setDisplayResult(result);
+      setShouldResetOnInput(true);
+    },
+    []
+  );
+
+  return (
+    <div className="w-full max-w-sm">
+      <div className="shadow-2xl rounded-2xl overflow-hidden">
+        <Display expression={expression} result={displayResult} />
+        <ButtonGrid onButtonClick={handleButtonClick} />
+      </div>
+      <HistoryPanel
+        history={history}
+        isOpen={historyOpen}
+        onToggle={() => setHistoryOpen((prev) => !prev)}
+        onClear={clearHistory}
+        onSelect={handleHistorySelect}
+      />
+    </div>
+  );
+};
+
+export default Calculator;
+</file>
+
+<file path="Dockerfile">
+FROM node:20-alpine AS base
+
+# Install dependencies only when needed
+FROM base AS deps
+RUN apk add --no-cache libc6-compat python3 make g++
+WORKDIR /app
+
+COPY package.json ./
+RUN npm install --frozen-lockfile || npm install
+
+# Rebuild the source code only when needed
+FROM base AS builder
+RUN apk add --no-cache libc6-compat python3 make g++
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN npm run build
+
+# Production image, copy all the files and run next
+FROM base AS runner
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV DB_PATH=/app/data/calculator.db
+
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Create data directory for SQLite
+RUN mkdir -p /app/data && chown nextjs:nodejs /app/data
+
+COPY --from=builder /app/public ./public
+
+# Set the correct permission for prerender cache
+RUN mkdir .next
+RUN chown nextjs:nodejs .next
+
+# Automatically leverage output traces to reduce image size
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# Copy better-sqlite3 native bindings
+COPY --from=builder /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
+COPY --from=builder /app/node_modules/bindings ./node_modules/bindings
+COPY --from=builder /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
+COPY --from=builder /app/node_modules/prebuild-install ./node_modules/prebuild-install
+
+USER nextjs
+
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "server.js"]
+</file>
+
+<file path="package.json">
+{
+  "name": "calculator-app",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "jest --passWithNoTests",
+    "test:watch": "jest --watch"
+  },
+  "dependencies": {
+    "better-sqlite3": "9.4.3",
+    "next": "14.2.3",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "reflect-metadata": "0.2.2",
+    "typeorm": "0.3.20"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.4.5",
+    "@testing-library/react": "^15.0.7",
+    "@types/better-sqlite3": "7.6.10",
+    "@types/jest": "^29.5.12",
+    "@types/node": "20.12.12",
+    "@types/react": "18.3.2",
+    "@types/react-dom": "18.3.0",
+    "autoprefixer": "10.4.19",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
+    "postcss": "8.4.38",
+    "tailwindcss": "3.4.3",
+    "ts-jest": "^29.1.4",
+    "typescript": "5.4.5"
+  }
+}
+</file>
+
+<file path="jest.config.ts">
+import type { Config } from 'jest';
+
+const config: Config = {
+  testEnvironment: 'jsdom',
+  transform: {
+    '^.+\\.tsx?$': [
+      'ts-jest',
+      {
+        tsconfig: 'tsconfig.json',
+      },
+    ],
+  },
+  moduleNameMapper: {
+    '^@/(.*)$': '<rootDir>/src/$1',
+  },
+  testPathIgnorePatterns: ['<rootDir>/node_modules/', '<rootDir>/.next/'],
+  setupFilesAfterSetup: [],
+};
+
+export default config;
+</file>
+
+<file path="src/__tests__/calculator.test.ts">
+import { evaluateExpression, formatResult } from '@/lib/calculator';
+
+describe('evaluateExpression', () => {
+  test('simple addition', () => {
+    expect(evaluateExpression('2+3')).toBe(5);
+  });
+
+  test('simple subtraction', () => {
+    expect(evaluateExpression('10-4')).toBe(6);
+  });
+
+  test('simple multiplication', () => {
+    expect(evaluateExpression('3*4')).toBe(12);
+  });
+
+  test('simple division', () => {
+    expect(evaluateExpression('12/4')).toBe(3);
+  });
+
+  test('operator precedence: multiplication before addition', () => {
+    expect(evaluateExpression('2+3*4')).toBe(14);
+  });
+
+  test('operator precedence: division before subtraction', () => {
+    expect(evaluateExpression('10-6/3')).toBe(8);
+  });
+
+  test('parentheses override precedence', () => {
+    expect(evaluateExpression('(2+3)*4')).toBe(20);
+  });
+
+  test('nested parentheses', () => {
+    expect(evaluateExpression('((2+3)*4)+1')).toBe(21);
+  });
+
+  test('decimal numbers', () => {
+    expect(evaluateExpression('1.5+2.5')).toBe(4);
+  });
+
+  test('negative numbers with unary minus', () => {
+    expect(evaluateExpression('-5+3')).toBe(-2);
+  });
+
+  test('complex expression', () => {
+    expect(evaluateExpression('(10+5)*2-8/4')).toBe(28);
+  });
+
+  test('division by zero throws', () => {
+    expect(() => evaluateExpression('5/0')).toThrow('Division by zero');
+  });
+
+  test('invalid characters throw', () => {
+    expect(() => evaluateExpression('2+abc')).toThrow('Invalid characters');
+  });
+
+  test('empty expression throws', () => {
+    expect(() => evaluateExpression('')).toThrow('Empty expression');
+  });
+
+  test('mismatched parentheses throw', () => {
+    expect(() => evaluateExpression('(2+3')).toThrow('Mismatched parentheses');
+  });
+
+  test('single number', () => {
+    expect(evaluateExpression('42')).toBe(42);
+  });
+
+  test('multiple operations same precedence', () => {
+    expect(evaluateExpression('1+2+3+4')).toBe(10);
+  });
+
+  test('multiple multiplications', () => {
+    expect(evaluateExpression('2*3*4')).toBe(24);
+  });
+
+  test('expression with spaces in source (whitespace stripped)', () => {
+    expect(evaluateExpression(' 2 + 3 ')).toBe(5);
+  });
+});
+
+describe('formatResult', () => {
+  test('formats integer correctly', () => {
+    expect(formatResult(42)).toBe('42');
+  });
+
+  test('formats decimal correctly', () => {
+    expect(formatResult(3.14)).toBe('3.14');
+  });
+
+  test('removes trailing zeros', () => {
+    expect(formatResult(2.5)).toBe('2.5');
+  });
+
+  test('handles zero', () => {
+    expect(formatResult(0)).toBe('0');
+  });
+
+  test('handles Infinity', () => {
+    expect(formatResult(Infinity)).toBe('Error');
+  });
+
+  test('handles negative Infinity', () => {
+    expect(formatResult(-Infinity)).toBe('Error');
+  });
+
+  test('handles NaN', () => {
+    expect(formatResult(NaN)).toBe('Error');
+  });
+
+  test('handles negative numbers', () => {
+    expect(formatResult(-5)).toBe('-5');
+  });
+
+  test('handles very small decimal precision', () => {
+    // 0.1 + 0.2 = 0.30000000000000004 in JS
+    const result = formatResult(0.1 + 0.2);
+    expect(result).toBe('0.3');
+  });
+});
+</file>
+
+<file path="src/__tests__/components/Display.test.tsx">
+/**
+ * @jest-environment jsdom
+ */
+import React from 'react';
+import { render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom';
+import Display from '@/components/Display';
+
+describe('Display', () => {
+  test('renders expression and result', () => {
+    render(<Display expression="2+3" result="5" />);
+    
+    expect(screen.getByTestId('expression-display')).toHaveTextContent('2+3');
+    expect(screen.getByTestId('result-display')).toHaveTextContent('5');
+  });
+
+  test('shows 0 when result is empty', () => {
+    render(<Display expression="" result="" />);
+    
+    expect(screen.getByTestId('result-display')).toHaveTextContent('0');
+  });
+
+  test('displays Error result', () => {
+    render(<Display expression="1/0" result="Error" />);
+    
+    expect(screen.getByTestId('result-display')).toHaveTextContent('Error');
+  });
+});
+</file>
+
+<file path="src/__tests__/components/ButtonGrid.test.tsx">
+/**
+ * @jest-environment jsdom
+ */
+import React from 'react';
+import { render, screen, fireEvent } from '@testing-library/react';
+import '@testing-library/jest-dom';
+import ButtonGrid from '@/components/ButtonGrid';
+
+describe('ButtonGrid', () => {
+  test('renders all number buttons', () => {
+    const mockClick = jest.fn();
+    render(<ButtonGrid onButtonClick={mockClick} />);
+
+    for (let i = 0; i <= 9; i++) {
+      expect(screen.getByTestId(`btn-${i}`)).toBeInTheDocument();
+    }
+  });
+
+  test('renders operator buttons', () => {
+    const mockClick = jest.fn();
+    render(<ButtonGrid onButtonClick={mockClick} />);
+
+    expect(screen.getByTestId('btn-+')).toBeInTheDocument();
+    expect(screen.getByTestId('btn--')).toBeInTheDocument();
+    expect(screen.getByTestId('btn-*')).toBeInTheDocument();
+    expect(screen.getByTestId('btn-/')).toBeInTheDocument();
+  });
+
+  test('renders special buttons', () => {
+    const mockClick = jest.fn();
+    render(<ButtonGrid onButtonClick={mockClick} />);
+
+    expect(screen.getByTestId('btn-clear')).toBeInTheDocument();
+    expect(screen.getByTestId('btn-equals')).toBeInTheDocument();
+    expect(screen.getByTestId('btn-.')).toBeInTheDocument();
+  });
+
+  test('calls onButtonClick with correct value when button is clicked', () => {
+    const mockClick = jest.fn();
+    render(<ButtonGrid onButtonClick={mockClick} />);
+
+    fireEvent.click(screen.getByTestId('btn-5'));
+    expect(mockClick).toHaveBeenCalledWith('5');
+
+    fireEvent.click(screen.getByTestId('btn-+'));
+    expect(mockClick).toHaveBeenCalledWith('+');
+
+    fireEvent.click(screen.getByTestId('btn-equals'));
+    expect(mockClick).toHaveBeenCalledWith('equals');
+
+    fireEvent.click(screen.getByTestId('btn-clear'));
+    expect(mockClick).toHaveBeenCalledWith('clear');
+  });
+});
+</file>
+
+<file path="src/__tests__/components/HistoryPanel.test.tsx">
+/**
+ * @jest-environment jsdom
+ */
+import React from 'react';
+import { render, screen, fireEvent } from '@testing-library/react';
+import '@testing-library/jest-dom';
+import HistoryPanel, { HistoryEntry } from '@/components/HistoryPanel';
+
+const mockHistory: HistoryEntry[] = [
+  { id: 1, expression: '2+3', result: '5', createdAt: '2024-01-01T00:00:00Z' },
+  { id: 2, expression: '10*5', result: '50', createdAt: '2024-01-01T00:01:00Z' },
+];
+
+describe('History
