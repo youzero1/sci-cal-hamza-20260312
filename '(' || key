@@ -1,3 +1,296 @@
 ')') {
         handleButtonClick(key);
-      } else if (key
+      } else if (key === 'Enter') {
+        event.preventDefault();
+        handleButtonClick('=');
+      } else if (key === 'Escape') {
+        handleButtonClick('clear');
+      } else if (key === 'Backspace') {
+        setExpression((prev) => prev.slice(0, -1));
+        setJustEvaluated(false);
+      }
+    },
+    [handleButtonClick]
+  );
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handleKeyDown]);
+
+  const handleHistorySelect = useCallback((expr: string) => {
+    setExpression(expr);
+    setResult('0');
+    setHistoryOpen(false);
+    setJustEvaluated(false);
+  }, []);
+
+  return (
+    <div className="relative w-full max-w-sm mx-auto">
+      <div className="bg-slate-900 rounded-2xl shadow-2xl overflow-hidden">
+        <div className="flex justify-end p-2">
+          <button
+            onClick={() => setHistoryOpen((prev) => !prev)}
+            className="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-800 transition-colors text-sm"
+            data-testid="history-toggle"
+            aria-label="Toggle history"
+          >
+            📋 History
+          </button>
+        </div>
+        <Display expression={expression} result={result} />
+        <ButtonGrid onButtonClick={handleButtonClick} />
+      </div>
+      <HistoryPanel
+        history={history}
+        isOpen={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        onClear={clearHistory}
+        onSelect={handleHistorySelect}
+      />
+    </div>
+  );
+};
+
+export default Calculator;
+</file>
+
+<file path="src/app/page.tsx">
+'use client';
+
+import Calculator from '@/components/Calculator';
+
+export default function Home() {
+  return (
+    <main className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+      <Calculator />
+    </main>
+  );
+}
+</file>
+
+<file path="src/app/api/history/route.ts">
+import { NextRequest, NextResponse } from 'next/server';
+import { getDataSource } from '@/lib/db';
+import { Calculation } from '@/entities/Calculation';
+
+export async function GET() {
+  try {
+    const ds = await getDataSource();
+    const repo = ds.getRepository(Calculation);
+    const calculations = await repo.find({
+      order: { createdAt: 'DESC' },
+      take: 20,
+    });
+    return NextResponse.json({ calculations });
+  } catch (error) {
+    console.error('GET /api/history error:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch history' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { expression, result } = body as { expression: unknown; result: unknown };
+
+    if (
+      typeof expression !== 'string' ||
+      !expression ||
+      result === undefined ||
+      result === null
+    ) {
+      return NextResponse.json(
+        { error: 'expression and result are required' },
+        { status: 400 }
+      );
+    }
+
+    const ds = await getDataSource();
+    const repo = ds.getRepository(Calculation);
+
+    const calc = repo.create({
+      expression: String(expression),
+      result: String(result),
+    });
+
+    const saved = await repo.save(calc);
+    return NextResponse.json({ calculation: saved }, { status: 201 });
+  } catch (error) {
+    console.error('POST /api/history error:', error);
+    return NextResponse.json(
+      { error: 'Failed to save calculation' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE() {
+  try {
+    const ds = await getDataSource();
+    const repo = ds.getRepository(Calculation);
+    await repo.clear();
+    return NextResponse.json({ message: 'History cleared' });
+  } catch (error) {
+    console.error('DELETE /api/history error:', error);
+    return NextResponse.json(
+      { error: 'Failed to clear history' },
+      { status: 500 }
+    );
+  }
+}
+</file>
+
+<file path="Dockerfile">
+# Stage 1: Install dependencies
+FROM node:20-alpine AS deps
+RUN apk add --no-cache libc6-compat python3 make g++
+WORKDIR /app
+COPY package.json ./
+RUN npm install --frozen-lockfile || npm install
+
+# Stage 2: Build the application
+FROM node:20-alpine AS builder
+RUN apk add --no-cache libc6-compat python3 make g++
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+
+RUN npm run build
+
+# Stage 3: Production runner
+FROM node:20-alpine AS runner
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV DB_PATH=/app/data/calculator.db
+
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Create data directory for SQLite
+RUN mkdir -p /app/data && chown nextjs:nodejs /app/data
+
+# Copy standalone output
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public 2>/dev/null || true
+
+USER nextjs
+
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "server.js"]
+</file>
+
+<file path="next.config.ts">
+import type { NextConfig } from 'next';
+
+const nextConfig: NextConfig = {
+  output: 'standalone',
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      config.externals = config.externals || [];
+      if (Array.isArray(config.externals)) {
+        config.externals.push('better-sqlite3');
+      }
+    }
+    return config;
+  },
+};
+
+export default nextConfig;
+</file>
+
+<file path="src/__tests__/evaluator.test.ts">
+import { evaluate, EvaluationError } from '@/lib/evaluator';
+
+describe('evaluate', () => {
+  describe('basic arithmetic', () => {
+    it('should add two numbers', () => {
+      expect(evaluate('2+3')).toBe('5');
+    });
+
+    it('should subtract two numbers', () => {
+      expect(evaluate('10-4')).toBe('6');
+    });
+
+    it('should multiply two numbers', () => {
+      expect(evaluate('3*7')).toBe('21');
+    });
+
+    it('should divide two numbers', () => {
+      expect(evaluate('20/4')).toBe('5');
+    });
+
+    it('should handle decimal results', () => {
+      expect(evaluate('10/3')).toBe('3.33333333333');
+    });
+
+    it('should handle decimal inputs', () => {
+      expect(evaluate('1.5+2.5')).toBe('4');
+    });
+  });
+
+  describe('operator precedence', () => {
+    it('should respect multiplication over addition', () => {
+      expect(evaluate('2+3*4')).toBe('14');
+    });
+
+    it('should respect division over subtraction', () => {
+      expect(evaluate('10-6/2')).toBe('7');
+    });
+
+    it('should handle complex expressions', () => {
+      expect(evaluate('2+3*4-6/2')).toBe('11');
+    });
+  });
+
+  describe('parentheses', () => {
+    it('should handle parenthesized addition', () => {
+      expect(evaluate('(2+3)*4')).toBe('20');
+    });
+
+    it('should handle nested parentheses', () => {
+      expect(evaluate('((2+3)*4)')).toBe('20');
+    });
+
+    it('should handle complex parentheses', () => {
+      expect(evaluate('(2+3)*(4-1)')).toBe('15');
+    });
+  });
+
+  describe('negative numbers', () => {
+    it('should handle negative number at start', () => {
+      expect(evaluate('-5+3')).toBe('-2');
+    });
+
+    it('should handle negative result', () => {
+      expect(evaluate('3-10')).toBe('-7');
+    });
+  });
+
+  describe('percentage', () => {
+    it('should handle percentage', () => {
+      expect(evaluate('50%')).toBe('0.5');
+    });
+
+    it('should handle percentage in expression', () => {
+      expect(evaluate('200*50%')).toBe('100');
+    });
+  });
+
+  describe('error handling', () =>
