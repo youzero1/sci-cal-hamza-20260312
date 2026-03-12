@@ -1,0 +1,365 @@
+'×') {
+      left = left * right;
+    } else {
+      if (right === 0) {
+        throw new EvaluationError('Division by zero');
+      }
+      left = left / right;
+    }
+  }
+
+  return left;
+}
+
+function parseAddition(state: ParserState): number {
+  let left = parseMultiplication(state);
+
+  while (true) {
+    skipWhitespace(state);
+    if (state.pos >= state.expression.length) break;
+
+    const op = state.expression[state.pos];
+    if (op !== '+' && op !== '-') break;
+
+    state.pos++; // consume operator
+    const right = parseMultiplication(state);
+
+    if (op === '+') {
+      left = left + right;
+    } else {
+      left = left - right;
+    }
+  }
+
+  return left;
+}
+
+export function evaluate(expression: string): string {
+  if (!expression || expression.trim().length === 0) {
+    throw new EvaluationError('Empty expression');
+  }
+
+  // Sanitize: only allow valid characters
+  const sanitized = expression.replace(/\s/g, '');
+  if (!/^[0-9+\-*/×÷().%]+$/.test(sanitized)) {
+    throw new EvaluationError('Invalid characters in expression');
+  }
+
+  const state: ParserState = {
+    expression: sanitized,
+    pos: 0,
+  };
+
+  const result = parseAddition(state);
+
+  skipWhitespace(state);
+  if (state.pos < state.expression.length) {
+    throw new EvaluationError(
+      `Unexpected character '${state.expression[state.pos]}' at position ${state.pos}`
+    );
+  }
+
+  if (!isFinite(result)) {
+    throw new EvaluationError('Result is not finite');
+  }
+
+  // Format result: remove trailing zeros after decimal
+  const formatted = parseFloat(result.toPrecision(12)).toString();
+  return formatted;
+}
+</file>
+
+<file path="src/components/Display.tsx">
+'use client';
+
+import React from 'react';
+
+interface DisplayProps {
+  expression: string;
+  result: string;
+}
+
+const Display: React.FC<DisplayProps> = ({ expression, result }) => {
+  return (
+    <div className="bg-slate-800 rounded-t-2xl p-6 min-h-[120px] flex flex-col justify-end">
+      <div
+        className="text-slate-400 text-right text-lg min-h-[28px] overflow-x-auto whitespace-nowrap scrollbar-hide"
+        data-testid="display-expression"
+      >
+        {expression || '\u00A0'}
+      </div>
+      <div
+        className="text-white text-right text-4xl font-light mt-2 overflow-x-auto whitespace-nowrap scrollbar-hide"
+        data-testid="display-result"
+      >
+        {result || '0'}
+      </div>
+    </div>
+  );
+};
+
+export default Display;
+</file>
+
+<file path="src/components/ButtonGrid.tsx">
+'use client';
+
+import React from 'react';
+
+export interface ButtonConfig {
+  label: string;
+  value: string;
+  className?: string;
+  span?: number;
+}
+
+interface ButtonGridProps {
+  onButtonClick: (value: string) => void;
+}
+
+const buttons: ButtonConfig[] = [
+  { label: 'C', value: 'clear', className: 'bg-slate-600 hover:bg-slate-500 text-white' },
+  { label: '(', value: '(', className: 'bg-slate-600 hover:bg-slate-500 text-white' },
+  { label: ')', value: ')', className: 'bg-slate-600 hover:bg-slate-500 text-white' },
+  { label: '÷', value: '/', className: 'bg-amber-600 hover:bg-amber-500 text-white' },
+
+  { label: '7', value: '7', className: 'bg-slate-700 hover:bg-slate-600 text-white' },
+  { label: '8', value: '8', className: 'bg-slate-700 hover:bg-slate-600 text-white' },
+  { label: '9', value: '9', className: 'bg-slate-700 hover:bg-slate-600 text-white' },
+  { label: '×', value: '*', className: 'bg-amber-600 hover:bg-amber-500 text-white' },
+
+  { label: '4', value: '4', className: 'bg-slate-700 hover:bg-slate-600 text-white' },
+  { label: '5', value: '5', className: 'bg-slate-700 hover:bg-slate-600 text-white' },
+  { label: '6', value: '6', className: 'bg-slate-700 hover:bg-slate-600 text-white' },
+  { label: '−', value: '-', className: 'bg-amber-600 hover:bg-amber-500 text-white' },
+
+  { label: '1', value: '1', className: 'bg-slate-700 hover:bg-slate-600 text-white' },
+  { label: '2', value: '2', className: 'bg-slate-700 hover:bg-slate-600 text-white' },
+  { label: '3', value: '3', className: 'bg-slate-700 hover:bg-slate-600 text-white' },
+  { label: '+', value: '+', className: 'bg-amber-600 hover:bg-amber-500 text-white' },
+
+  { label: '%', value: '%', className: 'bg-slate-700 hover:bg-slate-600 text-white' },
+  { label: '0', value: '0', className: 'bg-slate-700 hover:bg-slate-600 text-white' },
+  { label: '.', value: '.', className: 'bg-slate-700 hover:bg-slate-600 text-white' },
+  { label: '=', value: '=', className: 'bg-emerald-600 hover:bg-emerald-500 text-white' },
+];
+
+const ButtonGrid: React.FC<ButtonGridProps> = ({ onButtonClick }) => {
+  return (
+    <div className="grid grid-cols-4 gap-1 p-2 bg-slate-900 rounded-b-2xl">
+      {buttons.map((btn) => (
+        <button
+          key={btn.label}
+          onClick={() => onButtonClick(btn.value)}
+          className={`${btn.className || ''} rounded-xl p-4 text-xl font-medium transition-all duration-150 active:scale-95 ${
+            btn.span === 2 ? 'col-span-2' : ''
+          }`}
+          data-testid={`btn-${btn.label}`}
+        >
+          {btn.label}
+        </button>
+      ))}
+    </div>
+  );
+};
+
+export default ButtonGrid;
+</file>
+
+<file path="src/components/HistoryPanel.tsx">
+'use client';
+
+import React from 'react';
+
+export interface HistoryEntry {
+  id: number;
+  expression: string;
+  result: string;
+  createdAt: string;
+}
+
+interface HistoryPanelProps {
+  history: HistoryEntry[];
+  isOpen: boolean;
+  onClose: () => void;
+  onClear: () => void;
+  onSelect: (expression: string) => void;
+}
+
+const HistoryPanel: React.FC<HistoryPanelProps> = ({
+  history,
+  isOpen,
+  onClose,
+  onClear,
+  onSelect,
+}) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="absolute inset-0 bg-slate-900/95 rounded-2xl z-10 flex flex-col">
+      <div className="flex items-center justify-between p-4 border-b border-slate-700">
+        <h2 className="text-white text-lg font-semibold">History</h2>
+        <div className="flex gap-2">
+          <button
+            onClick={onClear}
+            className="text-red-400 hover:text-red-300 text-sm px-3 py-1 rounded-lg hover:bg-slate-800 transition-colors"
+            data-testid="history-clear"
+          >
+            Clear All
+          </button>
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-white text-sm px-3 py-1 rounded-lg hover:bg-slate-800 transition-colors"
+            data-testid="history-close"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-2">
+        {history.length === 0 ? (
+          <div className="text-slate-500 text-center mt-8">No history yet</div>
+        ) : (
+          history.map((entry) => (
+            <button
+              key={entry.id}
+              onClick={() => onSelect(entry.expression)}
+              className="w-full text-right p-3 rounded-lg hover:bg-slate-800 transition-colors block"
+              data-testid={`history-entry-${entry.id}`}
+            >
+              <div className="text-slate-400 text-sm">{entry.expression}</div>
+              <div className="text-white text-lg">= {entry.result}</div>
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default HistoryPanel;
+</file>
+
+<file path="src/components/Calculator.tsx">
+'use client';
+
+import React, { useState, useCallback, useEffect } from 'react';
+import Display from './Display';
+import ButtonGrid from './ButtonGrid';
+import HistoryPanel, { HistoryEntry } from './HistoryPanel';
+import { evaluate, EvaluationError } from '@/lib/evaluator';
+
+const Calculator: React.FC = () => {
+  const [expression, setExpression] = useState<string>('');
+  const [result, setResult] = useState<string>('0');
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyOpen, setHistoryOpen] = useState<boolean>(false);
+  const [justEvaluated, setJustEvaluated] = useState<boolean>(false);
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await fetch('/api/history');
+      if (res.ok) {
+        const data = await res.json();
+        setHistory(data.calculations || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch history:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
+
+  const saveToHistory = useCallback(
+    async (expr: string, res: string) => {
+      try {
+        await fetch('/api/history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expression: expr, result: res }),
+        });
+        await fetchHistory();
+      } catch (error) {
+        console.error('Failed to save to history:', error);
+      }
+    },
+    [fetchHistory]
+  );
+
+  const clearHistory = useCallback(async () => {
+    try {
+      await fetch('/api/history', { method: 'DELETE' });
+      setHistory([]);
+    } catch (error) {
+      console.error('Failed to clear history:', error);
+    }
+  }, []);
+
+  const handleEvaluate = useCallback(() => {
+    if (!expression) return;
+
+    try {
+      const evalResult = evaluate(expression);
+      setResult(evalResult);
+      saveToHistory(expression, evalResult);
+      setJustEvaluated(true);
+    } catch (error) {
+      if (error instanceof EvaluationError) {
+        setResult('Error');
+      } else {
+        setResult('Error');
+      }
+      setJustEvaluated(true);
+    }
+  }, [expression, saveToHistory]);
+
+  const handleButtonClick = useCallback(
+    (value: string) => {
+      switch (value) {
+        case 'clear':
+          setExpression('');
+          setResult('0');
+          setJustEvaluated(false);
+          break;
+
+        case '=':
+          handleEvaluate();
+          break;
+
+        case '+':
+        case '-':
+        case '*':
+        case '/':
+          if (justEvaluated) {
+            // Continue calculation with the result
+            setExpression(result + value);
+            setJustEvaluated(false);
+          } else {
+            setExpression((prev) => prev + value);
+          }
+          break;
+
+        default:
+          if (justEvaluated) {
+            // Start fresh expression
+            setExpression(value);
+            setResult('0');
+            setJustEvaluated(false);
+          } else {
+            setExpression((prev) => prev + value);
+          }
+          break;
+      }
+    },
+    [handleEvaluate, justEvaluated, result]
+  );
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      const key = event.key;
+
+      if (key >= '0' && key <= '9') {
+        handleButtonClick(key);
+      } else if (key
